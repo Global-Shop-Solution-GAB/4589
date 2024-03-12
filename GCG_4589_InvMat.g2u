@@ -1,0 +1,253 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Size(3540,2160)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form..Event(UnLoad,Unload)
+Gui.Form..Caption("Select a Job")
+Gui.Form..Sizeable(False)
+Gui.Form.cmdExport.Create(Button)
+Gui.Form.cmdExport.Size(1080,435)
+Gui.Form.cmdExport.Position(360,915)
+Gui.Form.cmdExport.Caption("Export")
+Gui.Form.cmdExport.Event(Click,cmdExport_Click)
+Gui.Form.txtJob.Create(TextBox,"",True,1215,300,0,360,450,True,0,"Arial",8,-2147483643,1)
+Gui.Form.lblJob.Create(Label,"Job",True,585,255,0,300,225,True,0,"Arial",8,-2147483633,0)
+Gui.Form.cmdJobBrwse.Create(Button)
+Gui.Form.cmdJobBrwse.Size(405,345)
+Gui.Form.cmdJobBrwse.Position(1710,435)
+Gui.Form.cmdJobBrwse.Caption("^")
+Gui.Form.cmdJobBrwse.Event(Click,cmdJobBrwse_Click)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+'Coded by: WAW
+'Date: 7/31/17
+'This project will generate a link between Purchase orders and Jobs, as well as create a report to show the monthly total for the amount invoiced.
+'hooks 16850 (populate on PO header) to display script 1 button text, 16890 (Script 1 button hook)
+
+'program also makes sure that a work order/seq have been entered when a PO number is listed when invoicing (35110) Presave when
+'AP>Transactions>AP Batch Entry New> Invoice
+
+
+'open connection'opening connection
+F.ODBC.Connection!conx.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+
+'check the hooks
+f.Intrinsic.control.If(v.Caller.Hook,=,16850)
+	v.Passed.000065.Set("Inv. Mat.")
+f.Intrinsic.Control.Elseif(v.Caller.Hook,=,16890)
+	'display the form
+	gui.Form..Visible(true)
+f.Intrinsic.Control.ElseIf(v.Caller.Hook,=,35110)	
+	'check to see if the PO field is filled in
+	f.intrinsic.Control.If(v.Passed.000030,<>,"")
+		'check to make sure WO is filled in
+		f.Intrinsic.Control.If(v.Passed.000049,=,"")
+			'override and inform the user
+			v.Passed.777777.Set(1)
+			F.Intrinsic.UI.Msgbox("Work Order cannot be blank")
+			f.Intrinsic.Control.CallSub(unload)		
+		f.Intrinsic.Control.EndIf
+		
+		f.Intrinsic.Control.If(v.Passed.000036,=,"")
+			'override and inform the user
+			v.Passed.777777.Set(1)
+			F.Intrinsic.UI.Msgbox("Sequence cannot be blank")
+			f.Intrinsic.Control.CallSub(unload)
+		f.Intrinsic.Control.EndIf	
+	f.Intrinsic.Control.EndIf
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4589_InvMat.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Main.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.SetErrorHandler("Unload_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+'closing connection and ending program
+F.ODBC.Connection!conx.Close
+Function.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Unload_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4589_InvMat.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+Program.Sub.Unload.End
+
+Program.Sub.cmdExport_Click.Start
+F.Intrinsic.Control.SetErrorHandler("cmdExport_Click_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+v.Local..BulkDeclareDate(dBegDate, dcurrentweek, DEndDate, dtempenddate, dtempbegdate)
+v.Local..BulkDeclareString(sSql,Sfilename, sHeaderTitles, sWeekStart, sEmp, sFilter, sExp, sline, sfinal, sret, sgrandtotal, suploadtypes, suploaddata,sElements, sjob, fexthours)
+v.Local..BulkDeclareFloat(fTotal,fEmpRate, fgrandtotal)
+v.Local..BulkDeclareLong(i, iEmp, imonths)
+
+'check to see if a job was selected
+f.Intrinsic.Control.If(v.Screen.Form!txtJob.text,=,"")
+	F.Intrinsic.UI.Msgbox("Select a Job!")
+	f.Intrinsic.Control.Exitsub
+f.Intrinsic.Control.EndIf
+
+'Have the user select the location the file should be stored in
+Function.Intrinsic.ui.showsavefiledialog("","excel|*.xls",variable.local.Sfilename)
+
+'if no file path selected prompt the user
+f.Intrinsic.Control.If(v.Local.sfilename,=,"***CANCEL***")
+	F.Intrinsic.UI.Msgbox("No file path selected!")
+	gui.Form..Visible(true)
+	f.Intrinsic.Control.ExitSub
+f.Intrinsic.Control.EndIf
+
+'close form
+gui.Form..Visible(false)
+
+'invoke wait dialog
+f.Intrinsic.UI.InvokeWaitDialog("Generating Excel File...")
+
+'set the job to the first 4 characters this is how they store their PO numbers from Invoices
+f.Intrinsic.String.Left(v.Screen.Form!txtJob.text,4,v.Local.sjob)
+
+'create the upload datatable
+v.Local.selements.Set("Job*!*Vendor_Name*!*Invoice_Number*!*Invoice_Post_Date*!*Amount")
+v.Local.suploadtypes.set("string*!*string*!*string*!*string*!*string")
+v.Local.suploaddata.Set("*!**!**!**!*")
+
+F.Data.DataTable.CreateFromString("dtExcel",v.Local.suploaddata,V.Local.selements,V.Local.suploadtypes,"*!*","@!@",True)
+f.Data.DataTable.DeleteRow("dtExcel")
+
+'add the header
+f.Data.DataTable.AddRow("dtExcel","Job","Job","Vendor_Name","Vendor Name","Invoice_Number","Invoice Number","Invoice_Post_Date","Invoice Post Date","Amount","Amount")
+
+'query for the information 
+f.Intrinsic.String.Build("Select PO_NO as JOB, RTRIM(VENDOR_ID) as VENDOR, INVOICE as INVOICE_NUMBER, POST_DATE as INVOICE_POST_DATE, EXT_COST as AMOUNT from V_AP_INV_TAX_DTL where JOB = '{0}' and JOB <> '' order by POST_DATE ASC",v.Local.sjob.trim,v.Local.ssql)
+f.Data.DataTable.CreateFromSQL("dtInvMat","conx",v.Local.ssql,true)
+f.Data.DataTable.AddColumn("dtInvMat","Vendor_Name","string","")
+
+'create a dictionary to fill in the vendor name
+F.Data.Dictionary.CreateFromSQL("dict","conx","Select RTRIM(VENDOR), NAME_VENDOR as VENDOR_NAME From V_VENDOR_MASTER")
+F.Data.Dictionary.SetDefaultReturn("dict","")
+F.Data.DataTable.FillFromDictionary("dtInvMat","dict","VENDOR","VENDOR_NAME")
+
+'get the grand total for the ext cost
+f.Data.DataTable.Compute("dtInvMat","SUM(AMOUNT)","",v.Local.fgrandtotal)
+
+'loop through the months and get the lins
+f.Intrinsic.Control.For(v.Local.i,0,v.datatable.dtInvMat.RowCount--,1)
+
+	'set the temporary start date
+	f.Intrinsic.Date.BeginningOfMonth(v.Local.dtempenddate,v.Local.dtempbegdate)
+
+	'set the beginning date
+	v.Local.dbegdate.Set(v.DataTable.dtInvMat(v.Local.i).INVOICE_POST_DATE!fieldvaltrim)
+	f.Intrinsic.Date.EndOfMonth(v.Local.dbegdate,v.Local.denddate)
+	
+	f.Intrinsic.Control.If(v.Local.i,=,0)
+		f.Intrinsic.Control.If(v.DataTable.dtInvMat(v.Local.i).INVOICE_POST_DATE!fieldvaltrim,<,v.Local.denddate)
+			f.Data.DataTable.AddRow("dtExcel","Job",v.DataTable.dtInvMat(v.Local.i).JOB!fieldvaltrim,"Vendor_Name",v.DataTable.dtInvMat(v.Local.i).VENDOR_NAME!fieldvaltrim,"Invoice_Number",v.DataTable.dtInvMat(v.Local.i).INVOICE_NUMBER!fieldvaltrim,"Invoice_Post_Date",v.DataTable.dtInvMat(v.Local.i).INVOICE_POST_DATE!fieldvaltrim,"Amount",v.DataTable.dtInvMat(v.Local.i).AMOUNT!fieldvaltrim)
+		f.Intrinsic.Control.EndIf
+	f.Intrinsic.control.Else
+		'check to see if outside of the month
+		f.Intrinsic.Control.If(v.DataTable.dtInvMat(v.Local.i).INVOICE_POST_DATE!fieldvaltrim,>,v.Local.dtempenddate)
+			'get the total ext cost for that month
+			f.Intrinsic.String.Build("INVOICE_POST_DATE >= #{0}# and INVOICE_POST_DATE <= #{1}# and JOB <> '{2}'",v.Local.dtempbegdate.PervasiveDate,v.Local.dtempenddate.PervasiveDate,"Monthly Totals: ",v.Local.sfilter)
+			f.Data.DataTable.Compute("dtInvMat","SUM(AMOUNT)",v.Local.sfilter,v.Local.ftotal)
+			
+			f.Intrinsic.String.Build("{0}","Monthly Totals: ",v.Local.sline)
+		
+			f.Data.DataTable.AddRow("dtExcel","Job",v.local.sline,"Amount",v.Local.ftotal)
+			f.Data.DataTable.AddRow("dtExcel","Job",v.DataTable.dtInvMat(v.Local.i).JOB!fieldvaltrim,"Vendor_Name",v.DataTable.dtInvMat(v.Local.i).VENDOR_NAME!fieldvaltrim,"Invoice_Number",v.DataTable.dtInvMat(v.Local.i).INVOICE_NUMBER!fieldvaltrim,"Invoice_Post_Date",v.DataTable.dtInvMat(v.Local.i).INVOICE_POST_DATE!fieldvaltrim,"Amount",v.DataTable.dtInvMat(v.Local.i).AMOUNT!fieldvaltrim)
+			
+		f.Intrinsic.Control.else
+			f.Data.DataTable.AddRow("dtExcel","Job",v.DataTable.dtInvMat(v.Local.i).JOB!fieldvaltrim,"Vendor_Name",v.DataTable.dtInvMat(v.Local.i).VENDOR_NAME!fieldvaltrim,"Invoice_Number",v.DataTable.dtInvMat(v.Local.i).INVOICE_NUMBER!fieldvaltrim,"Invoice_Post_Date",v.DataTable.dtInvMat(v.Local.i).INVOICE_POST_DATE!fieldvaltrim,"Amount",v.DataTable.dtInvMat(v.Local.i).AMOUNT!fieldvaltrim)
+		f.Intrinsic.Control.EndIf	
+	f.Intrinsic.Control.EndIf
+	
+	'get the total ext cost for that month
+	f.Intrinsic.String.Build("INVOICE_POST_DATE >= #{0}# and INVOICE_POST_DATE <= #{1}# and JOB <> '{2}'",v.Local.dbegdate.PervasiveDate,v.Local.denddate.PervasiveDate,"Monthly totals: ",v.Local.sfilter)
+	f.Data.DataTable.Compute("dtInvMat","SUM(AMOUNT)",v.Local.sfilter,v.Local.ftotal)
+	v.Local.dtempenddate.Set(v.Local.denddate)
+
+f.Intrinsic.Control.Next(v.Local.i)
+
+'get the total ext cost for that month
+f.Intrinsic.String.Build("INVOICE_POST_DATE >= #{0}# and INVOICE_POST_DATE <= #{1}# and JOB <> '{2}'",v.Local.dtempbegdate.PervasiveDate,v.Local.dtempenddate.PervasiveDate,"Monthly totals: ",v.Local.sfilter)
+f.Data.DataTable.Compute("dtInvMat","SUM(AMOUNT)",v.Local.sfilter,v.Local.ftotal)
+	
+f.Data.DataTable.AddRow("dtExcel","Job",v.local.sline,"Amount",v.Local.ftotal)
+f.Data.DataTable.AddRow("dtExcel","Job","Grand Total Ext Cost: ","Amount",v.Local.fgrandtotal)
+
+'create a view for the excel output
+f.Data.DataView.Create("dtExcel","dvExcel")
+f.Data.DataView.ToString("dtExcel","dvExcel",v.Local.selements,"*!*","$!$",v.Local.sfinal)
+
+f.Automation.MSExcel.WriteSpreadsheet(v.Local.sfilename,v.Local.sfinal)
+
+f.Intrinsic.UI.CloseWaitDialog
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("cmdExport_Click_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4589_InvMat.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.callsub(unload)
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.cmdExport_Click.End
+
+Program.Sub.cmdJobBrwse_Click.Start
+F.Intrinsic.Control.SetErrorHandler("cmdJobBrwse_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+v.Local.sret.Declare(String)
+v.Local.stitles.Declare(string)
+v.Local.iwidths.Declare(long)
+
+f.Intrinsic.UI.setbrowserhottypeahead(True)
+
+'browse for the job
+Function.Intrinsic.String.Split("Job*!*Suffix*!*Part*!*Description*!*Customer*!*Due Date","*!*",variable.local.sTitles)
+Function.Intrinsic.String.Split("1000*!*800*!*2000*!*3000*!*800*!*1000","*!*",variable.local.iWidths)
+Function.Intrinsic.UI.Browser("Select a Job","conx","Select Job, Suffix, Part, Description, Customer, Date_Due From V_JOB_HEADER ORDER BY JOB, SUFFIX",Variable.Local.sTitles,Variable.Local.iWidths,Variable.Local.sRet)
+Function.Intrinsic.Control.If(Variable.Local.sRet,"=","***CANCEL***")
+ 	Function.Intrinsic.UI.Msgbox("No job was selected!")
+Function.Intrinsic.Control.Else
+ 	Function.Intrinsic.String.Split(Variable.Local.sRet,"*!*",Variable.Local.sRet)
+	'set the job in the textbox
+	gui.Form.txtJob.Text(v.Local.sret(0))
+Function.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("cmdJobBrwse_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4589_InvMat.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.callsub(unload)
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.cmdJobBrwse_Click.End
